@@ -20,51 +20,23 @@ Servo south_prop;
 Servo east_prop;
 Servo west_prop;
 
+#include "PIDclass.h"
+PIDclass Xaxis(1, 0, 0.1);
+PIDclass Yaxis(1, 0, 0.1);
+
+
 //pin def
-const byte PWM_X = 12;
-const byte PWM_Y = 10;
-const byte PWM_THROTTLE = 11;
+const byte PWM_X_pin = 12;
+const byte PWM_Y_pin = 10;
+const byte PWM_THROTTLE_pin = 11;
+
+const byte NORTH_PROP_pin = 6;
+const byte SOUTH_PROP_pin = 5;
+const byte EAST_PROP_pin = 9;
+const byte WEST_PROP_pin = 3;
 
 //constants
 const float rad_to_deg = 180/3.141592654;
-
-//time (needed here as it is read on startup)
-unsigned long time = 0;
-
-/* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
-void setup() {
-  //debug coms
-  Serial.begin(250000);
-  
-  //radio stuff
-  pinMode(PWM_X, INPUT);
-  pinMode(PWM_Y, INPUT);
-  pinMode(PWM_THROTTLE, INPUT);
-
-  //IMU comunication
-  Wire.begin();
-  Wire.beginTransmission(0x68);
-  Wire.write(0x6B);
-  Wire.write(0);
-  Wire.endTransmission(true);
-
-  //initialise motors
-  north_prop.attach(6);
-  south_prop.attach(5);
-  east_prop.attach(9);
-  west_prop.attach(3);
-
-  //start time
-  time = millis(); //Start counting time in milliseconds
-
-  north_prop.writeMicroseconds(1000);
-  south_prop.writeMicroseconds(1000);
-  east_prop.writeMicroseconds(1000);
-  west_prop.writeMicroseconds(1000);
-
-  //delay 7 seconds (why?)
-  delay(7000);
-}
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 double throttle = 1300; //initial value of throttle to the motors
@@ -74,9 +46,9 @@ bool radio_receved = false;
 bool throttle_zero = true;
 
 void read_radio(){
-  unsigned long pwm_value_x = pulseIn(PWM_X, HIGH, 10000); //added timeout as default is one second (1 msec now)
-  unsigned long pwm_value_y = pulseIn(PWM_Y, HIGH, 10000); //(which is too long and will cause strange behavure)
-  unsigned long pwm_value_throttle = pulseIn(PWM_THROTTLE, HIGH, 10000); //this may still be too long 
+  unsigned long pwm_value_x = pulseIn(PWM_X_pin, HIGH, 10000); //added timeout as default is one second (1 msec now)
+  unsigned long pwm_value_y = pulseIn(PWM_Y_pin, HIGH, 10000); //(which is too long and will cause strange behavure)
+  unsigned long pwm_value_throttle = pulseIn(PWM_THROTTLE_pin, HIGH, 10000); //this may still be too long 
 
   if ((pwm_value_x == 0) || (pwm_value_y == 0) || (pwm_value_throttle == 0)){ //no data receved if zero is read
     radio_receved = false;
@@ -95,6 +67,7 @@ void read_radio(){
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 unsigned long elapsedTime, timePrev;
+unsigned long time = 0;
 
 void get_time(){
   timePrev = time;  // the previous time is stored before the actual time read
@@ -145,72 +118,41 @@ void read_IMU(){
 }
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
-//X axis PID values //
-float PID, pwmLeft, pwmRight, error, previous_error;
-float pid_p=0;
-float pid_i=0;
-float pid_d=0;
+void setup() {
+  //debug coms
+  Serial.begin(250000);
 
-//Y axis PID values //
-float PID2, pwmLeft2, pwmRight2, error2, previous_error2;
-float pid_p2=0;
-float pid_i2=0;
-float pid_d2=0;
+  //radio stuff
+  pinMode(PWM_X_pin, INPUT);
+  pinMode(PWM_Y_pin, INPUT);
+  pinMode(PWM_THROTTLE_pin, INPUT);
 
-/////////////////PID CONSTANTS/////////////////
-double kp=1;
-double ki=0;
-double kd=0.1;
+  //IMU comunication
+  Wire.begin();
+  Wire.beginTransmission(0x68);
+  Wire.write(0x6B);
+  Wire.write(0);
+  Wire.endTransmission(true);
 
-double kp2=1;
-double ki2=0;
-double kd2=0.1;
+  //initialise motors
+  north_prop.attach(NORTH_PROP_pin);
+  south_prop.attach(SOUTH_PROP_pin);
+  east_prop.attach(EAST_PROP_pin);
+  west_prop.attach(WEST_PROP_pin);
 
-void calculate_PID(){
-  ////////////////////////////P  I  D ///////////////////////////
-  error = Total_angle[0] - desired_X_angle;
-  pid_p = kp*error;
-  if(-3 <error <3) pid_i = pid_i+(ki*error);  
+  //start time
+  time = millis(); //Start counting time in milliseconds
 
-  pid_d = kd*((error - previous_error)/elapsedTime);
-  PID = 4*(pid_p + pid_i + pid_d);
-  
-  if(PID < -1000) PID = -1000;
-  if(PID > 1000) PID = 1000;
-  
-  pwmLeft = throttle + PID;
-  pwmRight = throttle - PID;
-  
-  if(pwmRight < 1000) pwmRight = 1000;
-  else if(pwmRight > 2000) pwmRight = 2000;
-  if(pwmLeft < 1000) pwmLeft = 1000;
-  else if(pwmLeft > 2000) pwmLeft = 2000;
-  
-  ////////////////////////////P  I  D  2///////////////////////////
-  error2 = Total_angle[1] - desired_Y_angle;
-  pid_p2 = kp2*error2;
-  if(-3 <error2 <3) pid_i2 = pid_i2+(ki2*error2);  
+  north_prop.writeMicroseconds(1000);
+  south_prop.writeMicroseconds(1000);
+  east_prop.writeMicroseconds(1000);
+  west_prop.writeMicroseconds(1000);
 
-  pid_d2 = kd2*((error2 - previous_error2)/elapsedTime);
-  PID2 = 4*(pid_p2 + pid_i2 + pid_d2);
-  
-  if(PID2 < -1000) PID2 = -1000;
-  if(PID2 > 1000) PID2 = 1000;
-  
-  pwmLeft2 = throttle + PID2;
-  pwmRight2 = throttle - PID2;
-
-  if(pwmRight2 < 1000) pwmRight2= 1000;
-  else if(pwmRight2 > 2000) pwmRight2=2000;
-  if(pwmLeft2  < 1000) pwmLeft2 = 1000;
-  else if(pwmLeft2  > 2000) pwmLeft2 =2000;
-
-  previous_error = error; //Remember to store the previous error.
-  previous_error2 = error2;
+  //delay 7 seconds (why?)
+  delay(7000);
 }
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
-
 void loop() {
   read_radio();
   if (!radio_receved) Serial.println("radio not conected"); //debug
@@ -220,12 +162,15 @@ void loop() {
   
   if (radio_receved && !throttle_zero){
     read_IMU();
-    calculate_PID();
+    float Xerror = Total_angle[0] - desired_X_angle;
+    float Yerror = Total_angle[0] - desired_Y_angle;
+    Xaxis.calculate_PID(elapsedTime, throttle, Xerror);
+    Yaxis.calculate_PID(elapsedTime, throttle, Yerror);
     
-    north_prop.writeMicroseconds(pwmLeft2);
-    south_prop.writeMicroseconds(pwmRight2);
-    east_prop.writeMicroseconds(pwmLeft);
-    west_prop.writeMicroseconds(pwmRight);
+    north_prop.writeMicroseconds(Yaxis.pwmLeft);
+    south_prop.writeMicroseconds(Yaxis.pwmRight);
+    east_prop.writeMicroseconds(Xaxis.pwmLeft);
+    west_prop.writeMicroseconds(Xaxis.pwmRight);
   }
   else{
     north_prop.writeMicroseconds(1000);
