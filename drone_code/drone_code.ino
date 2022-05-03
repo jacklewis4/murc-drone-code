@@ -1,6 +1,7 @@
 /*
  * Change Log
  * 
+ * V2
  * code refactored for readability
  * const keyword added were needed
  * some veriable types changed to match expeceted inputs/outputs
@@ -8,6 +9,14 @@
  * removed and added some serial prints for debug
  * added test for radio disconect
  * motors now power down if radio disconected or throttle near zero
+ * 
+ * V3
+ * don't ask about V3
+ * 
+ * V4
+ * PID loop converted into a class
+ * reduced global variables
+ * other minor layout changes
  */
 
 
@@ -39,16 +48,18 @@ const byte WEST_PROP_pin = 3;
 const float rad_to_deg = 180/3.141592654;
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
-double throttle = 1300; //initial value of throttle to the motors
-float desired_X_angle = 0;
+double throttle = 1000; //initial value of throttle to the motors
+float desired_X_angle = 5;
 float desired_Y_angle = 0;
 bool radio_receved = false;
-bool throttle_zero = true;
 
 void read_radio(){
-  unsigned long pwm_value_x = pulseIn(PWM_X_pin, HIGH, 10000); //added timeout as default is one second (1 msec now)
-  unsigned long pwm_value_y = pulseIn(PWM_Y_pin, HIGH, 10000); //(which is too long and will cause strange behavure)
-  unsigned long pwm_value_throttle = pulseIn(PWM_THROTTLE_pin, HIGH, 10000); //this may still be too long 
+  //unsigned long pwm_value_x = pulseIn(PWM_X_pin, HIGH, 10000); //added timeout as default is one second (1 msec now)
+  //unsigned long pwm_value_y = pulseIn(PWM_Y_pin, HIGH, 10000); //(which is too long and will cause strange behavure)
+  //unsigned long pwm_value_throttle = pulseIn(PWM_THROTTLE_pin, HIGH, 10000); //this may still be too long
+  unsigned long pwm_value_x = pulseIn(PWM_X_pin, HIGH);
+  unsigned long pwm_value_y = pulseIn(PWM_Y_pin, HIGH);
+  unsigned long pwm_value_throttle = pulseIn(PWM_THROTTLE_pin, HIGH);
 
   if ((pwm_value_x == 0) || (pwm_value_y == 0) || (pwm_value_throttle == 0)){ //no data receved if zero is read
     radio_receved = false;
@@ -58,11 +69,6 @@ void read_radio(){
   desired_X_angle = map(pwm_value_x,800,2200,-40,40);
   desired_Y_angle = map(pwm_value_y,800,2200,-40,40);
   throttle = pwm_value_throttle;
-
-  if (throttle < 1200){
-    throttle_zero = true;
-  }
-  else throttle_zero = false;
 }
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
@@ -101,7 +107,7 @@ void read_IMU(){
   Wire.endTransmission(false);
   Wire.requestFrom(0x68,4,true); //Just 4 registers
    
-  Gyr_rawX=Wire.read()<<8|Wire.read(); //Once again we shif and sum
+  Gyr_rawX=Wire.read()<<8|Wire.read(); //Once again we shift and sum
   Gyr_rawY=Wire.read()<<8|Wire.read();
 
   /*---X---*/
@@ -115,6 +121,39 @@ void read_IMU(){
    
   /*Now we have our angles in degree and values from -10º0 to 100º aprox*/
   //Serial.println(Total_angle[1]);
+}
+
+/* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
+void drive_motors(float Xangle, float Yangle, float throttle, bool radio_conected){
+  if (!radio_receved){
+    north_prop.writeMicroseconds(1000);
+    south_prop.writeMicroseconds(1000);
+    east_prop.writeMicroseconds(1000);
+    west_prop.writeMicroseconds(1000);
+    Serial.println("radio not conected"); //debug
+    return;
+  }
+  if (throttle < 1100){
+    north_prop.writeMicroseconds(1000);
+    south_prop.writeMicroseconds(1000);
+    east_prop.writeMicroseconds(1000);
+    west_prop.writeMicroseconds(1000);
+    Serial.println("throttle zero(ish)"); //debug
+    return;
+  }
+
+  Xangle = constrain(Xangle, -1000, 1000);
+  Yangle = constrain(Yangle, -1000, 1000);
+  
+  float XpwmLeft = constrain(throttle + Xangle, 1000, 2000);
+  float XpwmRight = constrain(throttle - Xangle, 1000, 2000);
+  float YpwmLeft = constrain(throttle + Yangle, 1000, 2000);
+  float YpwmRight = constrain(throttle - Yangle, 1000, 2000);
+
+  north_prop.writeMicroseconds(YpwmLeft);
+  south_prop.writeMicroseconds(YpwmRight);
+  east_prop.writeMicroseconds(XpwmLeft);
+  west_prop.writeMicroseconds(XpwmRight);
 }
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
@@ -155,27 +194,11 @@ void setup() {
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 void loop() {
   read_radio();
-  if (!radio_receved) Serial.println("radio not conected"); //debug
-  if (throttle_zero) Serial.println("throttle zero"); //debug
-
   get_time();
-  
-  if (radio_receved && !throttle_zero){
-    read_IMU();
-    float Xerror = Total_angle[0] - desired_X_angle;
-    float Yerror = Total_angle[0] - desired_Y_angle;
-    Xaxis.calculate_PID(elapsedTime, throttle, Xerror);
-    Yaxis.calculate_PID(elapsedTime, throttle, Yerror);
-    
-    north_prop.writeMicroseconds(Yaxis.pwmLeft);
-    south_prop.writeMicroseconds(Yaxis.pwmRight);
-    east_prop.writeMicroseconds(Xaxis.pwmLeft);
-    west_prop.writeMicroseconds(Xaxis.pwmRight);
-  }
-  else{
-    north_prop.writeMicroseconds(1000);
-    south_prop.writeMicroseconds(1000);
-    east_prop.writeMicroseconds(1000);
-    west_prop.writeMicroseconds(1000);
-  }
+  read_IMU();
+
+  Xaxis.calculate_PID(elapsedTime, desired_X_angle, Total_angle[0]);
+  Yaxis.calculate_PID(elapsedTime, desired_Y_angle, Total_angle[1]);
+
+  drive_motors(Xaxis.PID, Yaxis.PID, throttle, radio_receved);
 }
